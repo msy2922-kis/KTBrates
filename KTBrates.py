@@ -5,7 +5,7 @@ import gc
 # 1. 페이지 설정
 st.set_page_config(page_title="Rates", layout="centered")
 
-# 2. 엑셀 데이터 읽기 (기존과 동일, 캐싱 적용)
+# 2. 엑셀 데이터 읽기 (입력용 파일 - 기존 로직 유지)
 @st.cache_data(max_entries=1, show_spinner=False)
 def get_rates(uploaded_file):
     v_3m, v_3y, v_10y = "", "", ""
@@ -57,12 +57,12 @@ with st.form("main"):
     k3y = c2.text_input("3Y", value=v_3y)
     k10y = c3.text_input("10Y", value=v_10y)
     
-    # 엑셀 첨부 여부 선택 (기본값 True)
+    # 엑셀 첨부 여부 (기본 체크)
     attach_excel = st.checkbox("Attach Excel File", value=True)
     
     submitted = st.form_submit_button("Send", type="primary", use_container_width=True)
 
-# 5. 전송 로직 (엑셀 생성 + 첨부)
+# 5. 전송 로직 (수정됨: 파일명 및 양식 변경)
 if submitted:
     if not (sid and spw and rcv):
         st.error("Check Secrets")
@@ -70,54 +70,56 @@ if submitted:
         st.warning("Input Data")
     else:
         try:
-            # 필요한 라이브러리 지연 로딩 (속도 최적화)
             import smtplib
-            import io  # 메모리 파일 처리용
-            import openpyxl # 엑셀 생성용
+            import io
+            import openpyxl
             from datetime import datetime
             
+            # 날짜 포맷 (YYYY-MM-DD)
             today_str = datetime.now().strftime('%Y-%m-%d')
+            # 파일명용 날짜 포맷 (YYYYMMDD)
+            filename_date = datetime.now().strftime('%Y%m%d')
             
-            # 메일 객체 생성
             msg = EmailMessage()
             msg['Subject'] = f"[Rate] {today_str}"
             msg['From'] = sid
             msg['To'] = rcv
             msg.set_content(f"Market Rates ({today_str})\n\nCD: {cd}%\n3M: {k3m}%\n3Y: {k3y}%\n10Y: {k10y}%")
 
-            # [핵심] 엑셀 파일 생성 및 첨부
+            # [핵심] 첨부파일 생성 로직 변경
             if attach_excel:
-                # 1. 메모리 상에 엑셀 워크북 생성
                 wb_new = openpyxl.Workbook()
                 ws_new = wb_new.active
-                ws_new.title = "Market Rates"
+                ws_new.title = "Sheet1"
                 
-                # 2. 헤더와 데이터 작성
-                headers = ["Date", "CD (%)", "KTB 3M (%)", "KTB 3Y (%)", "KTB 10Y (%)"]
+                # 헤더 설정 (보내주신 양식에 맞춤)
+                headers = ["일자", "CD(91일)", "KTB 3M", "KTB 3Y", "KTB 10Y"]
                 values = [today_str, cd, k3m, k3y, k10y]
+                
                 ws_new.append(headers)
                 ws_new.append(values)
                 
-                # 3. 메모리 버퍼(BytesIO)에 저장 (디스크 저장 X)
+                # 메모리에 저장
                 excel_buffer = io.BytesIO()
                 wb_new.save(excel_buffer)
-                excel_buffer.seek(0) # 포인터를 처음으로 되돌림
+                excel_buffer.seek(0)
                 file_data = excel_buffer.read()
                 
-                # 4. 메일에 파일 첨부
+                # 파일명: 금리data_YYYYMMDD.xlsx
+                file_name = f"금리data_{filename_date}.xlsx"
+                
                 msg.add_attachment(
                     file_data,
                     maintype='application',
                     subtype='vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                    filename=f"Rates_{today_str}.xlsx"
+                    filename=file_name
                 )
 
-            # 전송
             with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
                 smtp.login(sid, spw)
                 smtp.send_message(msg)
             
-            st.success("Sent with Excel!" if attach_excel else "Sent!")
+            st.success(f"Sent! ({file_name})" if attach_excel else "Sent!")
             
         except Exception as e:
             st.error(f"Error: {e}")
