@@ -1,112 +1,112 @@
 import streamlit as st
 from email.message import EmailMessage
-import datetime
+import gc
 
-# 1. 페이지 설정 (최소화)
-st.set_page_config(page_title="Fast Rate Sender", layout="centered")
+# 1. 페이지 설정 (제목 없음, 레이아웃 centered)
+st.set_page_config(page_title="Rates", layout="centered")
 
-# 2. 캐싱된 파일 리더 함수 (Pandas 제거 -> 직접 읽기로 속도 극대화)
-@st.cache_data(show_spinner=False)
-def get_rates_from_excel(uploaded_file):
-    """
-    Pandas를 쓰지 않고 엑셀 라이브러리를 직접 사용하여 속도를 높입니다.
-    E2(row1, col4), L2(row1, col11), P2(row1, col15) 값을 가져옵니다.
-    """
+# 2. 엑셀 데이터 추출 함수 (캐시 + 메모리 최적화 + 포맷 자동 인식)
+@st.cache_data(max_entries=1, show_spinner=False)
+def get_rates(uploaded_file):
+    v_3m, v_3y, v_10y = "", "", ""
+    
     try:
         filename = uploaded_file.name.lower()
         
-        # .xls 파일인 경우 (구버전 엑셀)
+        # [Case A] .xls 파일 (구버전) -> xlrd 사용
         if filename.endswith('.xls'):
             import xlrd
-            wb = xlrd.open_workbook(file_contents=uploaded_file.read())
+            file_data = uploaded_file.read()
+            wb = xlrd.open_workbook(file_contents=file_data)
             sheet = wb.sheet_by_index(0)
-            # xlrd는 (row, col) 순서, 0부터 시작
-            v_3m = sheet.cell_value(1, 4)   # E2
-            v_3y = sheet.cell_value(1, 11)  # L2
-            v_10y = sheet.cell_value(1, 15) # P2
             
-        # .xlsx 파일인 경우 (신버전 엑셀)
+            # 0-based index: Row 2 -> 1 / E->4, L->11, P->15
+            v_3m = str(sheet.cell_value(1, 4))
+            v_3y = str(sheet.cell_value(1, 11))
+            v_10y = str(sheet.cell_value(1, 15))
+            
+            del file_data, wb, sheet
+
+        # [Case B] .xlsx 파일 (신버전) -> openpyxl 사용
         else:
             import openpyxl
+            # read_only=True로 메모리 절약
             wb = openpyxl.load_workbook(uploaded_file, data_only=True, read_only=True)
             sheet = wb.active
-            # openpyxl은 1부터 시작 (row=2, column=5는 E2)
-            v_3m = sheet.cell(row=2, column=5).value
-            v_3y = sheet.cell(row=2, column=12).value
-            v_10y = sheet.cell(row=2, column=16).value
-
-        # 소수점 처리 (혹시 숫자로 들어오면 문자로 변환)
-        def fmt(val):
-            return str(val) if val is not None else ""
             
-        return fmt(v_3m), fmt(v_3y), fmt(v_10y)
+            # 1-based index: Row 2 -> 2 / E->5, L->12, P->16
+            v_3m = str(sheet.cell(row=2, column=5).value)
+            v_3y = str(sheet.cell(row=2, column=12).value)
+            v_10y = str(sheet.cell(row=2, column=16).value)
+            
+            wb.close()
+            del wb, sheet
 
     except Exception:
-        return "", "", ""
+        pass
+    
+    # 메모리 강제 청소
+    gc.collect()
+    
+    # None 값이 들어오면 빈칸으로 처리
+    def clean(v): return v if v and v != "None" else ""
+    return clean(v_3m), clean(v_3y), clean(v_10y)
 
 # 3. 설정 로드
 secrets = st.secrets.get("gmail", {})
-sender_email = secrets.get("id", "")
-sender_password = secrets.get("pw", "")
-default_receiver = secrets.get("receiver", "")
+sid = secrets.get("id", "")
+spw = secrets.get("pw", "")
+srcv = secrets.get("receiver", "")
 
-# 4. UI 구성 (심플함 유지)
-st.markdown("### ⚡ Fast Rate Sender")
+# 4. UI 구성 (헤드라인 없음)
+# 파일 업로더 (라벨 숨김)
+uploaded_file = st.file_uploader("Excel", type=["xls", "xlsx"], label_visibility="collapsed")
 
-# 파일 업로드 (가장 먼저)
-uploaded_file = st.file_uploader("Excel Upload", type=["xls", "xlsx"], label_visibility="collapsed")
-
-# 기본값 설정
-v_3m, v_3y, v_10y = "", "", ""
-
-# 파일이 있으면 즉시 분석 (캐싱됨)
+# 데이터 로딩
 if uploaded_file:
-    v_3m, v_3y, v_10y = get_rates_from_excel(uploaded_file)
+    v_3m, v_3y, v_10y = get_rates(uploaded_file)
+else:
+    v_3m, v_3y, v_10y = "", "", ""
 
-# 5. 입력 및 전송 폼 (Form)
-with st.form("fast_form"):
-    # UI 렌더링 속도를 위해 컬럼 없이 일자 배치
-    receiver = st.text_input("To", value=default_receiver)
-    cd = st.text_input("CD (%)", placeholder="Direct Input")
+# 5. 입력 폼 (초경량)
+with st.form("main"):
+    # 수신인
+    rcv = st.text_input("To", value=srcv, placeholder="Receiver")
     
-    # 엑셀에서 가져온 값이 있으면 채워넣기
-    k3m = st.text_input("KTB 3M", value=v_3m)
-    k3y = st.text_input("KTB 3Y", value=v_3y)
-    k10y = st.text_input("KTB 10Y", value=v_10y)
+    # CD 금리
+    cd = st.text_input("CD (%)", placeholder="Enter CD")
+    
+    # 3M, 3Y, 10Y (가로 3열 배치)
+    c1, c2, c3 = st.columns(3)
+    k3m = c1.text_input("3M", value=v_3m)
+    k3y = c2.text_input("3Y", value=v_3y)
+    k10y = c3.text_input("10Y", value=v_10y)
 
-    # 전송 버튼
-    submitted = st.form_submit_button("Send Mail", type="primary")
+    # 꽉 찬 전송 버튼
+    submitted = st.form_submit_button("Send", type="primary", use_container_width=True)
 
-# 6. 전송 로직 (SMTP는 버튼 누를 때만 import)
+# 6. 전송 로직
 if submitted:
-    if not (sender_email and sender_password and receiver):
-        st.error("Check Secrets!")
+    if not (sid and spw and rcv):
+        st.error("Check Secrets")
     elif not (cd and k3m and k3y and k10y):
-        st.warning("Input Data!")
+        st.warning("Input Data")
     else:
         try:
-            import smtplib # 여기서 import하여 초기 로딩 속도 향상
+            import smtplib
+            from datetime import datetime
             
             msg = EmailMessage()
-            # pandas.Timestamp 대신 가벼운 datetime 사용
-            today = datetime.datetime.now().strftime('%Y-%m-%d')
-            msg['Subject'] = f"[Report] Market Rates {today}"
-            msg['From'] = sender_email
-            msg['To'] = receiver
-            
-            body = f"""Rates Report:
-- CD: {cd}%
-- KTB 3M: {k3m}%
-- KTB 3Y: {k3y}%
-- KTB 10Y: {k10y}%
-"""
-            msg.set_content(body)
+            msg['Subject'] = f"[Rate] {datetime.now().strftime('%Y-%m-%d')}"
+            msg['From'] = sid
+            msg['To'] = rcv
+            msg.set_content(f"CD: {cd}%\n3M: {k3m}%\n3Y: {k3y}%\n10Y: {k10y}%")
 
             with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-                smtp.login(sender_email, sender_password)
+                smtp.login(sid, spw)
                 smtp.send_message(msg)
             
-            st.success("Sent!")
+            st.success("Sent")
             
         except Exception as e:
-            st.error(f"Err: {e}")
+            st.error("Error")
