@@ -2,10 +2,35 @@ import streamlit as st
 from email.message import EmailMessage
 import gc
 
+# ==========================================
+# [사용자 설정] 여기만 수정하세요!
+# ==========================================
+
+# 1. 메일 제목 뒤에 항상 붙을 문구
+# 예: " (일일보고)" -> "[Rate] 2026-02-11 (일일보고)"
+FIXED_TITLE_SUFFIX = "[한국투자증권] 금리데이터송부" 
+
+# 2. 메일 본문 맨 아래에 들어갈 서명/연락처
+FIXED_FOOTER = """
+감사합니다.
+
+한국투자증권 FICC Sales부
+
+송인호 부서장 02-3276-5318
+권서연 대  리 02-3276-5472
+문찬호 대  리 02-3276-6496
+김종선 대  리 02-3276-5472
+진태영 사  원 02-3276-4976
+
+부서 Email: A07910@koreainvestment.com
+"""
+# ==========================================
+
+
 # 1. 페이지 설정
 st.set_page_config(page_title="Rates", layout="centered")
 
-# 2. 엑셀 데이터 읽기
+# 2. 엑셀 데이터 읽기 (최적화된 로직 유지)
 @st.cache_data(max_entries=1, show_spinner=False)
 def get_rates(uploaded_file):
     v_3m, v_3y, v_10y = "", "", ""
@@ -41,7 +66,7 @@ sid = secrets.get("id", "")
 spw = secrets.get("pw", "")
 srcv = secrets.get("receiver", "")
 
-# 4. UI 구성
+# 4. UI 구성 (입력창 최소화)
 uploaded_file = st.file_uploader("Excel", type=["xls", "xlsx"], label_visibility="collapsed")
 
 if uploaded_file:
@@ -50,7 +75,10 @@ else:
     v_3m, v_3y, v_10y = "", "", ""
 
 with st.form("main"):
+    # 수신인
     rcv = st.text_input("To", value=srcv, placeholder="Receiver")
+    
+    # 금리 데이터 입력 (제목/내용 입력창 제거됨)
     cd = st.text_input("CD (%)", placeholder="Enter CD")
     c1, c2, c3 = st.columns(3)
     k3m = c1.text_input("3M", value=v_3m)
@@ -78,10 +106,24 @@ if submitted:
             file_date_str = now.strftime('%Y%m%d')
             
             msg = EmailMessage()
-            msg['Subject'] = f"[Rate] {today_str}"
+            
+            # [제목 구성] 날짜 + 고정 문구
+            msg['Subject'] = f"[Rate] {today_str}{FIXED_TITLE_SUFFIX}"
+            
             msg['From'] = sid
             msg['To'] = rcv
-            msg.set_content(f"Market Rates ({today_str})\n\nCD: {cd}%\n3M: {k3m}%\n3Y: {k3y}%\n10Y: {k10y}%")
+            
+            # [본문 구성] 금리 데이터 + 고정 하단(서명)
+            body_txt = f"""Market Rates ({today_str})
+
+CD: {cd}%
+3M: {k3m}%
+3Y: {k3y}%
+10Y: {k10y}%
+
+---
+{FIXED_FOOTER}"""
+            msg.set_content(body_txt)
 
             if attach_excel:
                 wb_new = openpyxl.Workbook()
@@ -96,7 +138,7 @@ if submitted:
                 except ValueError:
                     val_cd, val_3m, val_3y, val_10y = cd, k3m, k3y, k10y
 
-                # --- [헤더 삭제됨] 바로 데이터 시작 ---
+                # 데이터 생성 (1행부터 시작, 세로형)
                 data_rows = [
                     [file_date_str, "CD수익률", val_cd],
                     [file_date_str, "KTB3m", val_3m],
@@ -107,10 +149,9 @@ if submitted:
                 for row in data_rows:
                     ws_new.append(row)
 
-                # 서식 지정: 이제 1행부터 4행까지 데이터가 존재함
-                # range(1, 5) -> 1, 2, 3, 4행
+                # 서식 지정 (1~4행의 C열)
                 for r in range(1, 5): 
-                    cell = ws_new.cell(row=r, column=3) # C열
+                    cell = ws_new.cell(row=r, column=3)
                     cell.number_format = '0.00'
 
                 excel_buffer = io.BytesIO()
