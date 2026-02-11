@@ -108,7 +108,7 @@ if submitted:
             msg = EmailMessage()
             
             # [제목 구성] 날짜 + 고정 문구
-            msg['Subject'] = f"[Rate] {today_str}{FIXED_TITLE_SUFFIX}"
+            msg['Subject'] = f"{FIXED_TITLE_SUFFIX}{today_str}"
             
             msg['From'] = sid
             msg['To'] = rcv
