@@ -5,7 +5,7 @@ import gc
 # 1. 페이지 설정
 st.set_page_config(page_title="Rates", layout="centered")
 
-# 2. 엑셀 데이터 읽기 (입력용 파일 - 기존 로직 유지)
+# 2. 엑셀 데이터 읽기 (기존 로직 유지 - 캐싱 및 최적화)
 @st.cache_data(max_entries=1, show_spinner=False)
 def get_rates(uploaded_file):
     v_3m, v_3y, v_10y = "", "", ""
@@ -57,12 +57,10 @@ with st.form("main"):
     k3y = c2.text_input("3Y", value=v_3y)
     k10y = c3.text_input("10Y", value=v_10y)
     
-    # 엑셀 첨부 여부 (기본 체크)
     attach_excel = st.checkbox("Attach Excel File", value=True)
-    
     submitted = st.form_submit_button("Send", type="primary", use_container_width=True)
 
-# 5. 전송 로직 (수정됨: 파일명 및 양식 변경)
+# 5. 전송 로직
 if submitted:
     if not (sid and spw and rcv):
         st.error("Check Secrets")
@@ -75,10 +73,10 @@ if submitted:
             import openpyxl
             from datetime import datetime
             
-            # 날짜 포맷 (YYYY-MM-DD)
-            today_str = datetime.now().strftime('%Y-%m-%d')
-            # 파일명용 날짜 포맷 (YYYYMMDD)
-            filename_date = datetime.now().strftime('%Y%m%d')
+            # 날짜 설정
+            now = datetime.now()
+            today_str = now.strftime('%Y-%m-%d')    # 메일 본문용 (예: 2026-02-11)
+            file_date_str = now.strftime('%Y%m%d')  # 파일명 및 엑셀 데이터용 (예: 20260211)
             
             msg = EmailMessage()
             msg['Subject'] = f"[Rate] {today_str}"
@@ -86,28 +84,47 @@ if submitted:
             msg['To'] = rcv
             msg.set_content(f"Market Rates ({today_str})\n\nCD: {cd}%\n3M: {k3m}%\n3Y: {k3y}%\n10Y: {k10y}%")
 
-            # [핵심] 첨부파일 생성 로직 변경
             if attach_excel:
                 wb_new = openpyxl.Workbook()
                 ws_new = wb_new.active
                 ws_new.title = "Sheet1"
                 
-                # 헤더 설정 (보내주신 양식에 맞춤)
-                headers = ["일자", "CD(91일)", "KTB 3M", "KTB 3Y", "KTB 10Y"]
-                values = [today_str, cd, k3m, k3y, k10y]
-                
-                ws_new.append(headers)
-                ws_new.append(values)
-                
+                # 1. 숫자 변환 (계산 가능하도록 float 처리)
+                try:
+                    val_cd = float(cd)
+                    val_3m = float(k3m)
+                    val_3y = float(k3y)
+                    val_10y = float(k10y)
+                except ValueError:
+                    val_cd, val_3m, val_3y, val_10y = cd, k3m, k3y, k10y
+
+                # 2. 세로 데이터 리스트 (요청하신 항목명 및 날짜 형식 적용)
+                data_rows = [
+                    ["일자", file_date_str],  # 20260211 형식
+                    ["CD수익률", val_cd],
+                    ["KTB3m", val_3m],
+                    ["KTB3y", val_3y],
+                    ["KTB10y", val_10y]
+                ]
+
+                # 3. 데이터 쓰기
+                for row in data_rows:
+                    ws_new.append(row)
+
+                # 4. 서식 지정 (B2~B5 숫자 서식, 소수점 2자리)
+                for r in range(2, 6): 
+                    cell = ws_new.cell(row=r, column=2)
+                    cell.number_format = '0.00'
+
                 # 메모리에 저장
                 excel_buffer = io.BytesIO()
                 wb_new.save(excel_buffer)
                 excel_buffer.seek(0)
                 file_data = excel_buffer.read()
                 
-                # 파일명: 금리data_YYYYMMDD.xlsx
-                file_name = f"금리data_{filename_date}.xlsx"
+                file_name = f"금리data_{file_date_str}.xlsx"
                 
+                # 첨부파일 추가
                 msg.add_attachment(
                     file_data,
                     maintype='application',
@@ -115,6 +132,7 @@ if submitted:
                     filename=file_name
                 )
 
+            # SMTP 전송
             with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
                 smtp.login(sid, spw)
                 smtp.send_message(msg)
